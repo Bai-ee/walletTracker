@@ -9,7 +9,7 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 SOLSCAN_API_KEY = os.getenv("SOLSCAN_API_KEY", "")
 
 # Helius
-HELIUS_BASE_URL = "https://api.helius.dev/v0"
+HELIUS_BASE_URL = "https://api-mainnet.helius-rpc.com/v0"
 HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 HELIUS_RATE_LIMIT = 10  # requests per second
 HELIUS_PAGE_SIZE = 100  # max transactions per request
