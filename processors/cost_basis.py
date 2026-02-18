@@ -63,20 +63,28 @@ class CostBasisEngine:
         """Process a single transaction for cost basis."""
         tx_type = tx.tx_type
 
-        # Handle swaps
+        # Handle swaps — track which mints are covered to avoid double-counting
         swaps = self.session.query(Swap).filter(Swap.transaction_id == tx.id).all()
+        swap_mints = set()
         for swap in swaps:
             self._process_swap(wallet, tx, swap, stats)
-            return
+            if swap.from_mint:
+                swap_mints.add(swap.from_mint)
+            if swap.to_mint:
+                swap_mints.add(swap.to_mint)
 
-        # Handle SOL transfers
+        # Handle SOL transfers (skip if SOL was part of a swap to avoid double-counting)
         sol_transfers = self.session.query(SolTransfer).filter(SolTransfer.transaction_id == tx.id).all()
         for st in sol_transfers:
+            if SOL_MINT in swap_mints:
+                continue
             self._process_sol_transfer(wallet, tx, st, tracked, tx_type, stats)
 
-        # Handle token transfers
+        # Handle token transfers (skip tokens already covered by a swap)
         token_transfers = self.session.query(TokenTransfer).filter(TokenTransfer.transaction_id == tx.id).all()
         for tt in token_transfers:
+            if tt.mint_address in swap_mints:
+                continue
             self._process_token_transfer(wallet, tx, tt, tracked, tx_type, stats)
 
     def _process_swap(self, wallet: Wallet, tx: Transaction, swap: Swap, stats: dict):
@@ -101,20 +109,21 @@ class CostBasisEngine:
                     swap.from_amount, proceeds, tx, "swap_out", stats
                 )
 
-        # Acquire to_token
+        # Acquire to_token (skip stablecoins — they don't need cost basis tracking)
         if swap.to_mint and swap.to_amount and swap.to_amount > 0:
-            # Cost basis is USD value of what was given up
-            cost = swap.from_usd_value or swap.to_usd_value or Decimal("0")
-            per_unit = cost / swap.to_amount if swap.to_amount > 0 else Decimal("0")
+            if swap.to_mint not in STABLECOIN_MINTS:
+                # Cost basis is USD value of what was given up
+                cost = swap.from_usd_value or swap.to_usd_value or Decimal("0")
+                per_unit = cost / swap.to_amount if swap.to_amount > 0 else Decimal("0")
 
-            acq_type = "swap_in"
-            if swap.from_mint in STABLECOIN_MINTS or swap.from_mint == SOL_MINT:
-                acq_type = "buy"
+                acq_type = "swap_in"
+                if swap.from_mint in STABLECOIN_MINTS or swap.from_mint == SOL_MINT:
+                    acq_type = "buy"
 
-            self._create_lot(
-                wallet, swap.to_mint, swap.to_symbol,
-                swap.to_amount, per_unit, cost, tx, acq_type, stats
-            )
+                self._create_lot(
+                    wallet, swap.to_mint, swap.to_symbol,
+                    swap.to_amount, per_unit, cost, tx, acq_type, stats
+                )
 
     def _process_sol_transfer(
         self, wallet: Wallet, tx: Transaction, st: SolTransfer,
