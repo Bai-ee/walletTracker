@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Solana Scanner{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { 50: '#f8fafc', 100: '#1e293b', 200: '#0f172a', 300: '#0a0f1a', 400: '#060a12' }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-dark-300 text-gray-200 min-h-screen">
+    <nav class="bg-dark-200 border-b border-gray-700 px-6 py-3">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <a href="/" class="text-xl font-bold text-purple-400 hover:text-purple-300">
+                Solana Scanner
+            </a>
+            <div class="flex gap-4 text-sm">
+                <a href="/" class="hover:text-purple-400 transition-colors">Dashboard</a>
+                <a href="/tax-report" class="hover:text-purple-400 transition-colors">Tax Report</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-6">
+        {% if error %}
+        <div class="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded mb-4">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="border-t border-gray-700 mt-12 py-4 text-center text-gray-500 text-xs">
+        Solana Wallet Scanner &amp; Tax Analyzer &mdash; For informational purposes only. Consult a tax professional.
+    </footer>
+
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

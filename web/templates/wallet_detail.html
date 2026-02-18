@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}{{ wallet.label or wallet.address[:12] }} — Solana Scanner{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">{{ wallet.label or "Wallet Detail" }}</h1>
+        <p class="text-gray-400 text-sm font-mono mt-1">{{ wallet.address }}</p>
+    </div>
+    <div class="flex gap-2">
+        <button onclick="scanWallet('{{ wallet.address }}')"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm transition-colors">
+            Rescan
+        </button>
+        <a href="/wallet/{{ wallet.address }}/graph"
+            class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded text-sm transition-colors">
+            View Graph
+        </a>
+    </div>
+</div>
+
+<!-- PnL Summary Cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Net Realized P&amp;L</div>
+        <div class="text-xl font-bold {% if pnl.net_realized_pnl >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(pnl.net_realized_pnl) }}
+        </div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Short-Term (Net)</div>
+        <div class="text-xl font-bold {% if pnl.net_short_term >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(pnl.net_short_term) }}
+        </div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Long-Term (Net)</div>
+        <div class="text-xl font-bold {% if pnl.net_long_term >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(pnl.net_long_term) }}
+        </div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Total Income</div>
+        <div class="text-xl font-bold text-blue-400">${{ "%.2f"|format(pnl.total_income) }}</div>
+    </div>
+</div>
+
+<!-- Holdings Table -->
+{% if holdings %}
+<div class="bg-dark-200 rounded-lg border border-gray-700 mb-6 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700">
+        <h2 class="font-semibold">Current Holdings</h2>
+    </div>
+    <table class="w-full text-sm">
+        <thead class="text-gray-400 uppercase text-xs bg-dark-400">
+            <tr>
+                <th class="px-4 py-2 text-left">Token</th>
+                <th class="px-4 py-2 text-right">Amount</th>
+                <th class="px-4 py-2 text-right">Avg Cost</th>
+                <th class="px-4 py-2 text-right">Total Cost Basis</th>
+                <th class="px-4 py-2 text-right">Lots</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for h in holdings[:20] %}
+            <tr class="border-t border-gray-700">
+                <td class="px-4 py-2 font-medium">{{ h.symbol }}</td>
+                <td class="px-4 py-2 text-right font-mono">{{ "%.6f"|format(h.amount) }}</td>
+                <td class="px-4 py-2 text-right">${{ "%.4f"|format(h.avg_cost_per_unit) }}</td>
+                <td class="px-4 py-2 text-right">${{ "%.2f"|format(h.total_cost_basis_usd) }}</td>
+                <td class="px-4 py-2 text-right text-gray-400">{{ h.lot_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Token PnL -->
+{% if token_pnl %}
+<div class="bg-dark-200 rounded-lg border border-gray-700 mb-6 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700">
+        <h2 class="font-semibold">Per-Token P&amp;L</h2>
+    </div>
+    <table class="w-full text-sm">
+        <thead class="text-gray-400 uppercase text-xs bg-dark-400">
+            <tr>
+                <th class="px-4 py-2 text-left">Token</th>
+                <th class="px-4 py-2 text-right">Realized P&amp;L</th>
+                <th class="px-4 py-2 text-right">Proceeds</th>
+                <th class="px-4 py-2 text-right">Cost Basis</th>
+                <th class="px-4 py-2 text-right">Disposals</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for tp in token_pnl[:20] %}
+            <tr class="border-t border-gray-700">
+                <td class="px-4 py-2 font-medium">{{ tp.symbol }}</td>
+                <td class="px-4 py-2 text-right {% if tp.realized_pnl >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                    ${{ "%.2f"|format(tp.realized_pnl) }}
+                </td>
+                <td class="px-4 py-2 text-right">${{ "%.2f"|format(tp.total_proceeds) }}</td>
+                <td class="px-4 py-2 text-right">${{ "%.2f"|format(tp.total_cost_basis) }}</td>
+                <td class="px-4 py-2 text-right text-gray-400">{{ tp.disposal_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Transaction Type Filter -->
+<div class="flex gap-2 mb-4 flex-wrap">
+    <a href="/wallet/{{ wallet.address }}"
+        class="px-3 py-1 rounded text-xs {% if not current_type %}bg-purple-600 text-white{% else %}bg-dark-200 text-gray-400 hover:text-white{% endif %} transition-colors">
+        All ({{ total_txs }})
+    </a>
+    {% for type_name, count in type_counts.items()|sort %}
+    <a href="/wallet/{{ wallet.address }}?type={{ type_name }}"
+        class="px-3 py-1 rounded text-xs {% if current_type == type_name %}bg-purple-600 text-white{% else %}bg-dark-200 text-gray-400 hover:text-white{% endif %} transition-colors">
+        {{ type_name }} ({{ count }})
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Transactions Table -->
+<div class="bg-dark-200 rounded-lg border border-gray-700 overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="text-gray-400 uppercase text-xs bg-dark-400">
+            <tr>
+                <th class="px-4 py-2 text-left">Date</th>
+                <th class="px-4 py-2 text-left">Type</th>
+                <th class="px-4 py-2 text-left">Details</th>
+                <th class="px-4 py-2 text-right">Fee</th>
+                <th class="px-4 py-2 text-left">Signature</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in transactions %}
+            <tr class="border-t border-gray-700 hover:bg-dark-100/10">
+                <td class="px-4 py-2 text-xs text-gray-400 whitespace-nowrap">
+                    {{ item.tx.block_time.strftime('%Y-%m-%d %H:%M') if item.tx.block_time else 'N/A' }}
+                </td>
+                <td class="px-4 py-2">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium
+                        {% if item.tx.tx_type in ('BUY', 'SOL_TRANSFER_IN', 'TOKEN_TRANSFER_IN', 'STAKING_REWARD', 'AIRDROP') %}
+                            bg-green-900/50 text-green-400
+                        {% elif item.tx.tx_type in ('SELL', 'SOL_TRANSFER_OUT', 'TOKEN_TRANSFER_OUT') %}
+                            bg-red-900/50 text-red-400
+                        {% elif item.tx.tx_type == 'SWAP' %}
+                            bg-blue-900/50 text-blue-400
+                        {% elif item.tx.tx_type == 'UNKNOWN' %}
+                            bg-yellow-900/50 text-yellow-400
+                        {% else %}
+                            bg-gray-700 text-gray-300
+                        {% endif %}
+                    ">{{ item.tx.tx_type }}</span>
+                </td>
+                <td class="px-4 py-2 text-xs">
+                    {% for s in item.swaps %}
+                        <span class="text-red-400">{{ "%.4f"|format(s.from_amount|float) }} {{ s.from_symbol }}</span>
+                        &rarr;
+                        <span class="text-green-400">{{ "%.4f"|format(s.to_amount|float) }} {{ s.to_symbol }}</span>
+                    {% endfor %}
+                    {% for st in item.sol_transfers %}
+                        {% if not item.swaps %}
+                        <span class="{% if st.direction == 'in' %}text-green-400{% else %}text-red-400{% endif %}">
+                            {{ "+" if st.direction == "in" else "-" }}{{ "%.4f"|format(st.amount_sol|float) }} SOL
+                        </span>
+                        {% endif %}
+                    {% endfor %}
+                    {% for tt in item.token_transfers %}
+                        {% if not item.swaps %}
+                        <span class="{% if tt.direction == 'in' %}text-green-400{% else %}text-red-400{% endif %}">
+                            {{ "+" if tt.direction == "in" else "-" }}{{ "%.4f"|format(tt.amount|float) }} {{ tt.token_symbol }}
+                        </span>
+                        {% endif %}
+                    {% endfor %}
+                </td>
+                <td class="px-4 py-2 text-right text-gray-500 text-xs">
+                    {{ "%.6f"|format(item.tx.fee_sol|float) if item.tx.fee_sol else "0" }}
+                </td>
+                <td class="px-4 py-2">
+                    <a href="https://solscan.io/tx/{{ item.tx.signature }}" target="_blank"
+                        class="text-purple-400 hover:underline text-xs font-mono">
+                        {{ item.tx.signature[:12] }}...
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<div class="flex justify-center gap-2 mt-6">
+    {% if page > 1 %}
+    <a href="/wallet/{{ wallet.address }}?page={{ page - 1 }}{% if current_type %}&type={{ current_type }}{% endif %}"
+        class="px-3 py-1 bg-dark-200 rounded text-sm hover:bg-gray-700">&laquo; Prev</a>
+    {% endif %}
+    <span class="px-3 py-1 text-gray-400 text-sm">Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="/wallet/{{ wallet.address }}?page={{ page + 1 }}{% if current_type %}&type={{ current_type }}{% endif %}"
+        class="px-3 py-1 bg-dark-200 rounded text-sm hover:bg-gray-700">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Scan Modal -->
+<div id="scan-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="bg-dark-200 rounded-lg p-6 border border-gray-700 w-96">
+        <h3 class="text-lg font-semibold mb-4">Scanning Wallet</h3>
+        <div id="scan-status" class="text-gray-400 text-sm mb-4">Fetching transactions...</div>
+        <div class="w-full bg-dark-300 rounded-full h-2 mb-4">
+            <div id="scan-progress" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+        </div>
+        <button onclick="closeScanModal()" class="text-gray-400 hover:text-white text-sm">Close</button>
+    </div>
+</div>
+{% endblock %}

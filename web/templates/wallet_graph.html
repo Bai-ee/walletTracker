@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Wallet Graph — {{ wallet.label or wallet.address[:12] }}{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">Wallet Interaction Graph</h1>
+        <p class="text-gray-400 text-sm font-mono mt-1">{{ wallet.address }}</p>
+    </div>
+    <a href="/wallet/{{ wallet.address }}" class="text-purple-400 hover:underline text-sm">&larr; Back to Wallet</a>
+</div>
+
+<div class="bg-dark-200 rounded-lg border border-gray-700 p-2" style="height: 600px;">
+    <div id="graph-container" style="width: 100%; height: 100%;"></div>
+</div>
+
+<div class="mt-4 flex gap-4 text-xs text-gray-400">
+    <span><span class="inline-block w-3 h-3 rounded-full bg-purple-500 mr-1"></span> Your Wallet</span>
+    <span><span class="inline-block w-3 h-3 rounded-full bg-blue-500 mr-1"></span> DEX</span>
+    <span><span class="inline-block w-3 h-3 rounded-full bg-orange-500 mr-1"></span> CEX</span>
+    <span><span class="inline-block w-3 h-3 rounded-full bg-pink-500 mr-1"></span> NFT Marketplace</span>
+    <span><span class="inline-block w-3 h-3 rounded-full bg-green-500 mr-1"></span> Staking</span>
+    <span><span class="inline-block w-3 h-3 rounded-full bg-gray-500 mr-1"></span> Unknown</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<script>
+    const graphData = {{ graph_data|safe }};
+
+    const groupColors = {
+        self: { background: '#a855f7', border: '#9333ea' },
+        dex: { background: '#3b82f6', border: '#2563eb' },
+        cex: { background: '#f97316', border: '#ea580c' },
+        nft: { background: '#ec4899', border: '#db2777' },
+        staking: { background: '#22c55e', border: '#16a34a' },
+        unknown: { background: '#6b7280', border: '#4b5563' },
+    };
+
+    const nodes = graphData.nodes.map(n => ({
+        id: n.id,
+        label: n.label,
+        color: groupColors[n.group] || groupColors.unknown,
+        font: { color: '#e5e7eb', size: 11 },
+        shape: n.group === 'self' ? 'diamond' : 'dot',
+        size: n.group === 'self' ? 25 : 15,
+    }));
+
+    const edges = graphData.edges.map(e => ({
+        from: e.from,
+        to: e.to,
+        value: e.value,
+        title: e.title,
+        color: { color: '#4b5563', highlight: '#a855f7' },
+    }));
+
+    const container = document.getElementById('graph-container');
+    const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+    const options = {
+        physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -50, springLength: 150 } },
+        interaction: { hover: true, tooltipDelay: 100 },
+        edges: { scaling: { min: 1, max: 8 }, smooth: { type: 'continuous' } },
+    };
+    new vis.Network(container, data, options);
+</script>
+{% endblock %}

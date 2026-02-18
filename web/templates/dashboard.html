@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Solana Scanner{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-bold">Wallet Dashboard</h1>
+</div>
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Tracked Wallets</div>
+        <div class="text-2xl font-bold text-white">{{ wallets|length }}</div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Total Realized P&amp;L</div>
+        <div class="text-2xl font-bold {% if total_pnl >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(total_pnl) }}
+        </div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Total Income</div>
+        <div class="text-2xl font-bold text-blue-400">${{ "%.2f"|format(total_income) }}</div>
+    </div>
+</div>
+
+<!-- Add Wallet Form -->
+<div class="bg-dark-200 rounded-lg p-6 border border-gray-700 mb-8">
+    <h2 class="text-lg font-semibold mb-4">Add Wallet</h2>
+    <form method="POST" action="/wallet" class="flex flex-col md:flex-row gap-3">
+        <input
+            type="text" name="address" placeholder="Solana wallet address"
+            class="flex-1 bg-dark-300 border border-gray-600 rounded px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+            required
+        >
+        <input
+            type="text" name="label" placeholder="Label (optional)"
+            class="md:w-48 bg-dark-300 border border-gray-600 rounded px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+        >
+        <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded font-medium transition-colors">
+            Add Wallet
+        </button>
+    </form>
+</div>
+
+<!-- Wallet List -->
+{% if wallets %}
+<div class="bg-dark-200 rounded-lg border border-gray-700 overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-dark-400 text-gray-400 uppercase text-xs">
+            <tr>
+                <th class="px-4 py-3 text-left">Wallet</th>
+                <th class="px-4 py-3 text-right">Transactions</th>
+                <th class="px-4 py-3 text-right">Realized P&amp;L</th>
+                <th class="px-4 py-3 text-right">Income</th>
+                <th class="px-4 py-3 text-right">Last Scanned</th>
+                <th class="px-4 py-3 text-center">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in wallets %}
+            <tr class="border-t border-gray-700 hover:bg-dark-100/10">
+                <td class="px-4 py-3">
+                    <a href="/wallet/{{ item.wallet.address }}" class="text-purple-400 hover:underline">
+                        {{ item.wallet.label or item.wallet.address[:12] + "..." }}
+                    </a>
+                    <div class="text-xs text-gray-500 font-mono">{{ item.wallet.address[:20] }}...</div>
+                </td>
+                <td class="px-4 py-3 text-right">{{ item.tx_count }}</td>
+                <td class="px-4 py-3 text-right {% if item.pnl.net_realized_pnl >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                    ${{ "%.2f"|format(item.pnl.net_realized_pnl) }}
+                </td>
+                <td class="px-4 py-3 text-right text-blue-400">${{ "%.2f"|format(item.pnl.total_income) }}</td>
+                <td class="px-4 py-3 text-right text-gray-400 text-xs">
+                    {{ item.wallet.last_scanned.strftime('%Y-%m-%d %H:%M') if item.wallet.last_scanned else 'Never' }}
+                </td>
+                <td class="px-4 py-3 text-center">
+                    <button
+                        onclick="scanWallet('{{ item.wallet.address }}')"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs transition-colors"
+                    >
+                        Scan
+                    </button>
+                    <a href="/wallet/{{ item.wallet.address }}/graph"
+                        class="ml-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-xs transition-colors inline-block"
+                    >
+                        Graph
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center text-gray-500 py-12">
+    No wallets added yet. Paste a Solana address above to get started.
+</div>
+{% endif %}
+
+<!-- Scan Progress Modal -->
+<div id="scan-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="bg-dark-200 rounded-lg p-6 border border-gray-700 w-96">
+        <h3 class="text-lg font-semibold mb-4">Scanning Wallet</h3>
+        <div id="scan-status" class="text-gray-400 text-sm mb-4">Fetching transactions...</div>
+        <div class="w-full bg-dark-300 rounded-full h-2 mb-4">
+            <div id="scan-progress" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+        </div>
+        <button onclick="closeScanModal()" class="text-gray-400 hover:text-white text-sm">Close</button>
+    </div>
+</div>
+{% endblock %}

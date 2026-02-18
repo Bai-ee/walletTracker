@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Tax Report {{ year }} — Solana Scanner{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-bold">Tax Report &mdash; {{ year }}</h1>
+    <div class="flex gap-2">
+        <a href="/api/export/csv_8949?year={{ year }}"
+            class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm transition-colors">
+            Download CSV (8949)
+        </a>
+        <a href="/api/export/csv_turbotax?year={{ year }}"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm transition-colors">
+            Download TurboTax CSV
+        </a>
+        <a href="/api/export/pdf?year={{ year }}"
+            class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm transition-colors">
+            Download PDF
+        </a>
+    </div>
+</div>
+
+<!-- Year Selector -->
+<div class="flex gap-2 mb-6">
+    {% for y in [2023, 2024, 2025] %}
+    <a href="/tax-report?year={{ y }}"
+        class="px-4 py-2 rounded text-sm {% if year == y %}bg-purple-600 text-white{% else %}bg-dark-200 text-gray-400 hover:text-white{% endif %} transition-colors">
+        {{ y }}
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Summary -->
+{% if summary %}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Net Short-Term</div>
+        <div class="text-xl font-bold {% if summary.totals.short_term_gains + summary.totals.short_term_losses >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(summary.totals.short_term_gains + summary.totals.short_term_losses) }}
+        </div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Net Long-Term</div>
+        <div class="text-xl font-bold {% if summary.totals.long_term_gains + summary.totals.long_term_losses >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(summary.totals.long_term_gains + summary.totals.long_term_losses) }}
+        </div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Total Income</div>
+        <div class="text-xl font-bold text-blue-400">${{ "%.2f"|format(summary.totals.total_income) }}</div>
+    </div>
+    <div class="bg-dark-200 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-xs">Total Fees</div>
+        <div class="text-xl font-bold text-gray-400">${{ "%.2f"|format(summary.totals.total_fees) }}</div>
+    </div>
+</div>
+
+<!-- Flagged Items -->
+{% if summary.flagged.unknown_transactions > 0 or summary.flagged.missing_prices > 0 %}
+<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-6">
+    <h3 class="font-semibold text-yellow-400 mb-2">Items Needing Review</h3>
+    <ul class="text-sm text-yellow-200 space-y-1">
+        {% if summary.flagged.unknown_transactions > 0 %}
+        <li>{{ summary.flagged.unknown_transactions }} transactions with unknown type</li>
+        {% endif %}
+        {% if summary.flagged.missing_prices > 0 %}
+        <li>{{ summary.flagged.missing_prices }} token transfers missing USD price data</li>
+        {% endif %}
+    </ul>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- Short-Term Disposals (Form 8949 Part I) -->
+<div class="bg-dark-200 rounded-lg border border-gray-700 mb-6 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+        <h2 class="font-semibold">Short-Term Disposals (Part I, Box C)</h2>
+        <span class="text-gray-400 text-sm">{{ form_data.short_term|length }} items</span>
+    </div>
+    {% if form_data.short_term %}
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="text-gray-400 uppercase text-xs bg-dark-400">
+                <tr>
+                    <th class="px-4 py-2 text-left">Description</th>
+                    <th class="px-4 py-2 text-left">Date Acquired</th>
+                    <th class="px-4 py-2 text-left">Date Sold</th>
+                    <th class="px-4 py-2 text-right">Proceeds</th>
+                    <th class="px-4 py-2 text-right">Cost Basis</th>
+                    <th class="px-4 py-2 text-right">Gain/Loss</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in form_data.short_term[:100] %}
+                <tr class="border-t border-gray-700">
+                    <td class="px-4 py-2">{{ item.description }}</td>
+                    <td class="px-4 py-2 text-gray-400">{{ item.date_acquired }}</td>
+                    <td class="px-4 py-2 text-gray-400">{{ item.date_sold }}</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(item.proceeds) }}</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(item.cost_basis) }}</td>
+                    <td class="px-4 py-2 text-right {% if item.gain_loss >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                        ${{ "%.2f"|format(item.gain_loss) }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot class="bg-dark-400 font-semibold">
+                <tr>
+                    <td colspan="3" class="px-4 py-2">TOTALS</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(form_data.short_term_totals.total_proceeds) }}</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(form_data.short_term_totals.total_cost_basis) }}</td>
+                    <td class="px-4 py-2 text-right {% if form_data.short_term_totals.total_gain_loss >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                        ${{ "%.2f"|format(form_data.short_term_totals.total_gain_loss) }}
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="px-4 py-6 text-gray-500 text-center">No short-term disposals for {{ year }}.</div>
+    {% endif %}
+</div>
+
+<!-- Long-Term Disposals (Form 8949 Part II) -->
+<div class="bg-dark-200 rounded-lg border border-gray-700 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+        <h2 class="font-semibold">Long-Term Disposals (Part II, Box F)</h2>
+        <span class="text-gray-400 text-sm">{{ form_data.long_term|length }} items</span>
+    </div>
+    {% if form_data.long_term %}
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="text-gray-400 uppercase text-xs bg-dark-400">
+                <tr>
+                    <th class="px-4 py-2 text-left">Description</th>
+                    <th class="px-4 py-2 text-left">Date Acquired</th>
+                    <th class="px-4 py-2 text-left">Date Sold</th>
+                    <th class="px-4 py-2 text-right">Proceeds</th>
+                    <th class="px-4 py-2 text-right">Cost Basis</th>
+                    <th class="px-4 py-2 text-right">Gain/Loss</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in form_data.long_term[:100] %}
+                <tr class="border-t border-gray-700">
+                    <td class="px-4 py-2">{{ item.description }}</td>
+                    <td class="px-4 py-2 text-gray-400">{{ item.date_acquired }}</td>
+                    <td class="px-4 py-2 text-gray-400">{{ item.date_sold }}</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(item.proceeds) }}</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(item.cost_basis) }}</td>
+                    <td class="px-4 py-2 text-right {% if item.gain_loss >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                        ${{ "%.2f"|format(item.gain_loss) }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot class="bg-dark-400 font-semibold">
+                <tr>
+                    <td colspan="3" class="px-4 py-2">TOTALS</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(form_data.long_term_totals.total_proceeds) }}</td>
+                    <td class="px-4 py-2 text-right">${{ "%.2f"|format(form_data.long_term_totals.total_cost_basis) }}</td>
+                    <td class="px-4 py-2 text-right {% if form_data.long_term_totals.total_gain_loss >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                        ${{ "%.2f"|format(form_data.long_term_totals.total_gain_loss) }}
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="px-4 py-6 text-gray-500 text-center">No long-term disposals for {{ year }}.</div>
+    {% endif %}
+</div>
+{% endblock %}
