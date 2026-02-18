@@ -1,7 +1,7 @@
 """FIFO/LIFO cost basis engine for tracking token acquisitions and disposals."""
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -60,153 +60,153 @@ class CostBasisEngine:
         return stats
 
     def _process_transaction(self, wallet: Wallet, tx: Transaction, tracked: set[str], stats: dict):
-        """Process a single transaction for cost basis."""
+        """
+        Process a single transaction for cost basis using net token flows.
+
+        Instead of processing swaps and transfers separately (which breaks on
+        DEX routing artifacts where tokens pass through the wallet), compute
+        the NET flow per mint and create lots/disposals from those.
+        Swap records are used only for determining acquisition types and cost basis.
+        """
         tx_type = tx.tx_type
 
-        # Handle swaps — track which mints are covered to avoid double-counting
-        swaps = self.session.query(Swap).filter(Swap.transaction_id == tx.id).all()
-        swap_mints = set()
-        for swap in swaps:
-            self._process_swap(wallet, tx, swap, stats)
-            if swap.from_mint:
-                swap_mints.add(swap.from_mint)
-            if swap.to_mint:
-                swap_mints.add(swap.to_mint)
-
-        # Handle SOL transfers (skip if SOL was part of a swap to avoid double-counting)
-        sol_transfers = self.session.query(SolTransfer).filter(SolTransfer.transaction_id == tx.id).all()
-        for st in sol_transfers:
-            if SOL_MINT in swap_mints:
-                continue
-            self._process_sol_transfer(wallet, tx, st, tracked, tx_type, stats)
-
-        # Handle token transfers (skip tokens already covered by a swap)
+        # Gather all movements
         token_transfers = self.session.query(TokenTransfer).filter(TokenTransfer.transaction_id == tx.id).all()
+        sol_transfers = self.session.query(SolTransfer).filter(SolTransfer.transaction_id == tx.id).all()
+        swaps = self.session.query(Swap).filter(Swap.transaction_id == tx.id).all()
+
+        # Compute net flows per mint
+        flows = defaultdict(lambda: {
+            "net": Decimal("0"), "usd_in": Decimal("0"), "usd_out": Decimal("0"),
+            "symbol": None, "counterparties_in": set(), "counterparties_out": set(),
+        })
+
         for tt in token_transfers:
-            if tt.mint_address in swap_mints:
+            # Skip SOL token transfers — SOL is already tracked via SolTransfers
+            # (wSOL wrapping/unwrapping creates both native and token transfers)
+            if tt.mint_address == SOL_MINT:
                 continue
-            self._process_token_transfer(wallet, tx, tt, tracked, tx_type, stats)
+            f = flows[tt.mint_address]
+            f["symbol"] = f["symbol"] or tt.token_symbol
+            usd = tt.usd_value_at_time or Decimal("0")
+            if tt.direction == "in":
+                f["net"] += tt.amount
+                f["usd_in"] += usd
+                if tt.counterparty_address:
+                    f["counterparties_in"].add(tt.counterparty_address)
+            else:
+                f["net"] -= tt.amount
+                f["usd_out"] += usd
+                if tt.counterparty_address:
+                    f["counterparties_out"].add(tt.counterparty_address)
 
-    def _process_swap(self, wallet: Wallet, tx: Transaction, swap: Swap, stats: dict):
-        """Process a swap: dispose of from_token, acquire to_token."""
-        # Skip stablecoin-to-stablecoin
-        if swap.from_mint in STABLECOIN_MINTS and swap.to_mint in STABLECOIN_MINTS:
-            return
+        for st in sol_transfers:
+            f = flows[SOL_MINT]
+            f["symbol"] = "SOL"
+            usd = st.usd_value_at_time or Decimal("0")
+            if st.direction == "in":
+                f["net"] += st.amount_sol
+                f["usd_in"] += usd
+                if st.counterparty_address:
+                    f["counterparties_in"].add(st.counterparty_address)
+            else:
+                f["net"] -= st.amount_sol
+                f["usd_out"] += usd
+                if st.counterparty_address:
+                    f["counterparties_out"].add(st.counterparty_address)
 
-        # Dispose of from_token (unless it's the base currency in a buy)
-        if swap.from_mint and swap.from_amount and swap.from_amount > 0:
-            if swap.from_mint not in STABLECOIN_MINTS:
-                proceeds = swap.from_usd_value or Decimal("0")
-                self._create_disposal(
-                    wallet, swap.from_mint, swap.from_symbol,
-                    swap.from_amount, proceeds, tx, "swap_out", stats
-                )
-            # For buys with SOL/stablecoin, still need to dispose of the SOL
-            elif swap.from_mint == SOL_MINT:
-                proceeds = swap.from_usd_value or Decimal("0")
-                self._create_disposal(
-                    wallet, SOL_MINT, "SOL",
-                    swap.from_amount, proceeds, tx, "swap_out", stats
-                )
+        # Deduct tx fee from SOL (fees reduce balance but aren't in SolTransfer records)
+        if tx.fee_sol and tx.fee_sol > 0:
+            flows[SOL_MINT]["net"] -= tx.fee_sol
+            flows[SOL_MINT]["usd_out"] += tx.fee_usd or Decimal("0")
+            flows[SOL_MINT]["symbol"] = "SOL"
 
-        # Acquire to_token (skip stablecoins — they don't need cost basis tracking)
-        if swap.to_mint and swap.to_amount and swap.to_amount > 0:
-            if swap.to_mint not in STABLECOIN_MINTS:
-                # Cost basis is USD value of what was given up
-                cost = swap.from_usd_value or swap.to_usd_value or Decimal("0")
-                per_unit = cost / swap.to_amount if swap.to_amount > 0 else Decimal("0")
-
+        # Build swap context for determining types and cost basis
+        swap_ctx = {}
+        for swap in swaps:
+            if swap.to_mint and swap.to_amount:
                 acq_type = "swap_in"
                 if swap.from_mint in STABLECOIN_MINTS or swap.from_mint == SOL_MINT:
                     acq_type = "buy"
+                swap_ctx.setdefault(swap.to_mint, {}).update({
+                    "acq_type": acq_type,
+                    "cost_usd": swap.from_usd_value or swap.to_usd_value or Decimal("0"),
+                    "swap_to_amount": swap.to_amount,
+                })
+            if swap.from_mint and swap.from_amount:
+                ctx = swap_ctx.setdefault(swap.from_mint, {})
+                ctx["disposal_type"] = "swap_out"
+                ctx["proceeds_usd"] = swap.from_usd_value or Decimal("0")
+                ctx["swap_from_amount"] = swap.from_amount
 
-                self._create_lot(
-                    wallet, swap.to_mint, swap.to_symbol,
-                    swap.to_amount, per_unit, cost, tx, acq_type, stats
-                )
+        # Process net flows
+        for mint, f in flows.items():
+            net = f["net"]
+            symbol = f["symbol"]
 
-    def _process_sol_transfer(
-        self, wallet: Wallet, tx: Transaction, st: SolTransfer,
-        tracked: set[str], tx_type: str, stats: dict
-    ):
-        """Process a SOL transfer for cost basis."""
-        if not st.amount_sol or st.amount_sol <= 0:
-            return
+            if net == 0 or mint in STABLECOIN_MINTS:
+                continue
 
-        # Check if dust
-        usd = st.usd_value_at_time or Decimal("0")
-        if 0 < float(usd) < DUST_THRESHOLD_USD:
-            return
+            net_usd = f["usd_in"] - f["usd_out"]
 
-        if st.direction == "in":
-            # Determine acquisition type
-            is_own_transfer = st.counterparty_address in tracked
-            if is_own_transfer:
-                acq_type = "transfer_in"
-            elif tx_type == "STAKING_REWARD":
-                acq_type = "staking_reward"
-            elif tx_type == "AIRDROP":
-                acq_type = "airdrop"
+            if net > 0:
+                # --- Acquisition ---
+                # Determine type
+                all_own = f["counterparties_in"] and f["counterparties_in"].issubset(tracked)
+                ctx = swap_ctx.get(mint, {})
+
+                if all_own:
+                    acq_type = "transfer_in"
+                elif "acq_type" in ctx:
+                    acq_type = ctx["acq_type"]
+                elif tx_type == "STAKING_REWARD":
+                    acq_type = "staking_reward"
+                elif tx_type == "AIRDROP":
+                    acq_type = "airdrop"
+                else:
+                    acq_type = "transfer_in"
+
+                # Determine cost basis
+                if "cost_usd" in ctx:
+                    cost = ctx["cost_usd"]
+                    # Scale if net differs from swap amount (partial routing)
+                    swap_amt = ctx.get("swap_to_amount", net)
+                    if swap_amt and swap_amt > 0 and net != swap_amt:
+                        cost = cost * net / swap_amt
+                else:
+                    cost = abs(net_usd)
+
+                if 0 < float(abs(net_usd)) < DUST_THRESHOLD_USD:
+                    continue
+
+                per_unit = cost / net if net > 0 else Decimal("0")
+                self._create_lot(wallet, mint, symbol, net, per_unit, cost, tx, acq_type, stats)
+
             else:
-                acq_type = "transfer_in"
+                # --- Disposal ---
+                amount = abs(net)
 
-            per_unit = usd / st.amount_sol if st.amount_sol > 0 else Decimal("0")
-            self._create_lot(
-                wallet, SOL_MINT, "SOL", st.amount_sol, per_unit, usd, tx, acq_type, stats
-            )
+                # Skip own-wallet transfers
+                all_own = f["counterparties_out"] and f["counterparties_out"].issubset(tracked)
+                if all_own:
+                    continue
 
-        elif st.direction == "out":
-            is_own_transfer = st.counterparty_address in tracked
-            if is_own_transfer:
-                return  # Don't treat transfers between own wallets as disposals
+                ctx = swap_ctx.get(mint, {})
+                if "disposal_type" in ctx:
+                    disposal_type = ctx["disposal_type"]
+                    proceeds = ctx.get("proceeds_usd", abs(net_usd))
+                    # Scale if net differs from swap amount
+                    swap_amt = ctx.get("swap_from_amount", amount)
+                    if swap_amt and swap_amt > 0 and amount != swap_amt:
+                        proceeds = proceeds * amount / swap_amt
+                else:
+                    disposal_type = "transfer_out"
+                    proceeds = abs(net_usd)
 
-            disposal_type = "transfer_out"
-            proceeds = usd
-            self._create_disposal(
-                wallet, SOL_MINT, "SOL", st.amount_sol, proceeds, tx, disposal_type, stats
-            )
+                if 0 < float(abs(net_usd)) < DUST_THRESHOLD_USD:
+                    continue
 
-    def _process_token_transfer(
-        self, wallet: Wallet, tx: Transaction, tt: TokenTransfer,
-        tracked: set[str], tx_type: str, stats: dict
-    ):
-        """Process a token transfer for cost basis."""
-        if not tt.amount or tt.amount <= 0:
-            return
-        if tt.mint_address in STABLECOIN_MINTS:
-            return  # Don't track stablecoin cost basis
-
-        usd = tt.usd_value_at_time or Decimal("0")
-        if 0 < float(usd) < DUST_THRESHOLD_USD:
-            return
-
-        if tt.direction == "in":
-            is_own_transfer = tt.counterparty_address in tracked
-            if is_own_transfer:
-                acq_type = "transfer_in"
-            elif tx_type == "STAKING_REWARD":
-                acq_type = "staking_reward"
-            elif tx_type == "AIRDROP":
-                acq_type = "airdrop"
-            else:
-                acq_type = "transfer_in"
-
-            per_unit = usd / tt.amount if tt.amount > 0 else Decimal("0")
-            self._create_lot(
-                wallet, tt.mint_address, tt.token_symbol,
-                tt.amount, per_unit, usd, tx, acq_type, stats
-            )
-
-        elif tt.direction == "out":
-            is_own_transfer = tt.counterparty_address in tracked
-            if is_own_transfer:
-                return
-
-            proceeds = usd
-            self._create_disposal(
-                wallet, tt.mint_address, tt.token_symbol,
-                tt.amount, proceeds, tx, "transfer_out", stats
-            )
+                self._create_disposal(wallet, mint, symbol, amount, proceeds, tx, disposal_type, stats)
 
     def _create_lot(
         self, wallet: Wallet, mint: str, symbol: str | None,
