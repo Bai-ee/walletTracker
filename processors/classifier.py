@@ -93,6 +93,28 @@ class TransactionClassifier:
             if any(t.direction == "in" for t in token_transfers):
                 return "STAKING_REWARD"
 
+        # Jupiter DCA / limit order fills: source=JUPITER but type=UNKNOWN
+        # These show up as token in (DCA buy fill) or token out (DCA sell fill)
+        # with a small SOL refund from the DCA program
+        if source == "JUPITER" and helius_type == "UNKNOWN":
+            token_in = [t for t in token_transfers if t.direction == "in"]
+            token_out = [t for t in token_transfers if t.direction == "out"]
+
+            if token_in and not token_out:
+                # DCA buy fill — received tokens
+                mint = token_in[0].mint_address
+                if mint in STABLECOIN_MINTS or mint == SOL_MINT:
+                    return "SELL"  # Got stables/SOL back = sold something via DCA
+                return "BUY"
+            elif token_out and not token_in:
+                # DCA sell fill — sent tokens out
+                mint = token_out[0].mint_address
+                if mint in STABLECOIN_MINTS or mint == SOL_MINT:
+                    return "BUY"  # Sent stables/SOL = buying something via DCA
+                return "SELL"
+            elif token_in and token_out:
+                return "SWAP"
+
         # Token transfers
         if token_transfers and not sol_transfers:
             return self._classify_token_transfer(wallet, token_transfers)
